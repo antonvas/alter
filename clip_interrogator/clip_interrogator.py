@@ -20,26 +20,24 @@ from typing import List
 from safetensors.numpy import load_file, save_file
 
 BLIP_MODELS = {
-    'base': 'https://storage.googleapis.com/sfr-vision-language-research/BLIP/models/model_base_caption_capfilt_large.pth',
-    'large': 'https://storage.googleapis.com/sfr-vision-language-research/BLIP/models/model_large_caption.pth'
+    'base': '/app/models/model_base_caption_capfilt_large.pth',
+    'large': '/app/models/model_large_caption.pth'
 }
 
 CACHE_URLS_VITL = [
-    'https://huggingface.co/pharma/ci-preprocess/resolve/main/ViT-L-14_openai_artists.safetensors',
-    'https://huggingface.co/pharma/ci-preprocess/resolve/main/ViT-L-14_openai_flavors.safetensors',
-    'https://huggingface.co/pharma/ci-preprocess/resolve/main/ViT-L-14_openai_mediums.safetensors',
-    'https://huggingface.co/pharma/ci-preprocess/resolve/main/ViT-L-14_openai_movements.safetensors',
-    'https://huggingface.co/pharma/ci-preprocess/resolve/main/ViT-L-14_openai_negative.safetensors',
-    'https://huggingface.co/pharma/ci-preprocess/resolve/main/ViT-L-14_openai_trendings.safetensors',
-] 
+    '/app/models/ViT-L-14_openai_artists.safetensors',
+    '/app/models/ViT-L-14_openai_flavors.safetensors',
+    '/app/models/ViT-L-14_openai_mediums.safetensors',
+    '/app/models/ViT-L-14_openai_movements.safetensors',
+    '/app/models/ViT-L-14_openai_trendings.safetensors',
+]
 
 CACHE_URLS_VITH = [
-    'https://huggingface.co/pharma/ci-preprocess/resolve/main/ViT-H-14_laion2b_s32b_b79k_artists.safetensors',
-    'https://huggingface.co/pharma/ci-preprocess/resolve/main/ViT-H-14_laion2b_s32b_b79k_flavors.safetensors',
-    'https://huggingface.co/pharma/ci-preprocess/resolve/main/ViT-H-14_laion2b_s32b_b79k_mediums.safetensors',
-    'https://huggingface.co/pharma/ci-preprocess/resolve/main/ViT-H-14_laion2b_s32b_b79k_movements.safetensors',
-    'https://huggingface.co/pharma/ci-preprocess/resolve/main/ViT-H-14_laion2b_s32b_b79k_negative.safetensors',
-    'https://huggingface.co/pharma/ci-preprocess/resolve/main/ViT-H-14_laion2b_s32b_b79k_trendings.safetensors',
+    '/app/models/ViT-H-14_laion2b_s32b_b79k_artists.safetensors',
+    '/app/models/ViT-H-14_laion2b_s32b_b79k_flavors.safetensors',
+    '/app/models/ViT-H-14_laion2b_s32b_b79k_mediums.safetensors',
+    '/app/models/ViT-H-14_laion2b_s32b_b79k_movements.safetensors',
+    '/app/models/ViT-H-14_laion2b_s32b_b79k_trendings.safetensors',
 ]
 
 
@@ -59,16 +57,16 @@ class Config:
 
     # clip settings
     clip_model_name: str = 'ViT-L-14/openai'
-    clip_model_path: str = None
+    clip_model_path: str = '/app/models'
 
     # interrogator settings
-    cache_path: str = 'cache'   # path to store cached text embeddings
-    download_cache: bool = True # when true, cached embeds are downloaded from huggingface
+    cache_path: str = '/app/models'   # path to store cached text embeddings
+    download_cache: bool = True  # when true, cached embeds are downloaded from huggingface
     chunk_size: int = 2048      # batch size for CLIP, use smaller for lower VRAM
     data_path: str = os.path.join(os.path.dirname(__file__), 'data')
     device: str = ("mps" if torch.backends.mps.is_available() else "cuda" if torch.cuda.is_available() else "cpu")
     flavor_intermediate_count: int = 2048
-    quiet: bool = False # when quiet progress bars are not shown
+    quiet: bool = True  # when quiet progress bars are not shown
 
 
 class Interrogator():
@@ -110,7 +108,8 @@ class Interrogator():
         for url in cache_urls:
             filepath = os.path.join(self.config.cache_path, url.split('/')[-1])
             if not os.path.exists(filepath):
-                _download_file(url, filepath, quiet=self.config.quiet)
+                print(f'No file {filepath}', flush=True)
+                # _download_file(url, filepath, quiet=self.config.quiet)
 
     def load_clip_model(self):
         start_time = time.time()
@@ -271,18 +270,12 @@ class Interrogator():
 
     def interrogate(self, image: Image, min_flavors: int=8, max_flavors: int=32) -> str:
         caption = self.generate_caption(image)
+
         image_features = self.image_to_features(image)
-
         merged = _merge_tables([self.artists, self.flavors, self.mediums, self.movements, self.trendings], self.config)
-        flaves = merged.rank(image_features, self.config.flavor_intermediate_count)
+        tops = merged.rank(image_features, max_flavors)
 
-        best_prompt, best_sim = caption, self.similarity(image_features, caption)
-        best_prompt = self.chain(image_features, flaves, best_prompt, best_sim, min_count=min_flavors, max_count=max_flavors, desc="Flavor chain")
-
-        fast_prompt = self.interrogate_fast(image, max_flavors)
-        classic_prompt = self.interrogate_classic(image, max_flavors)
-        candidates = [caption, classic_prompt, fast_prompt, best_prompt]
-        return candidates[np.argmax(self.similarities(image_features, candidates))]
+        return caption, _truncate_to_fit(", ".join(tops), self.tokenize)
 
     def rank_top(self, image_features: torch.Tensor, text_array: List[str], reverse: bool=False) -> str:
         text_tokens = self.tokenize([text for text in text_array]).to(self.device)

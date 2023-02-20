@@ -6,3 +6,7 @@ safetensors
 tqdm
 open_clip_torch
 blip-ci
+
+eventlet==0.30.1
+falcon==3.0.1
+gunicorn==20.0.4
